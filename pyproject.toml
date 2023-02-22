@@ -9,7 +9,11 @@ packages = [{include = "simod_queue_worker"}]
 [tool.poetry.dependencies]
 python = "^3.9"
 pika = "^1.3.1"
+kubernetes = "^26.1.0"
 
+
+[tool.poetry.group.dev.dependencies]
+pika-stubs = "^0.1.3"
 
 [build-system]
 requires = ["poetry-core"]

@@ -66,8 +66,8 @@ class Worker:
                 logging.exception('Exception when calling BatchV1Api->create_namespaced_job: %s, %s'.format(e, e.body))
 
     def make_job(self, job_request_id) -> client.V1Job:
-        request_output_dir = Path(f'/usr/src/Simod/data/{job_request_id}')
-        config_path = request_output_dir / 'config.yaml'
+        request_output_dir = Path(f'/tmp/simod-volume/data/{job_request_id}')
+        config_path = request_output_dir / 'configuration.yaml'
         job = client.V1Job(
             api_version='batch/v1',
             kind='Job',
@@ -93,7 +93,7 @@ class Worker:
                                 volume_mounts=[
                                     client.V1VolumeMount(
                                         name='simod-data',
-                                        mount_path='/usr/src/Simod/data',
+                                        mount_path='/tmp/simod-volume',
                                     ),
                                 ],
                             )
@@ -114,6 +114,8 @@ class Worker:
         return job
 
     def run(self):
+        self._channel.queue_declare(queue=self.settings.requests_queue, durable=True)
+
         self._channel.basic_consume(
             queue=self.settings.requests_queue, on_message_callback=self.on_message
         )

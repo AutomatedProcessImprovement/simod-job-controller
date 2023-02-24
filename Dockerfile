@@ -14,4 +14,4 @@ ENV SIMOD_RESULTS_QUEUE_NAME=results
 ENV SIMOD_DOCKER_IMAGE=nokal/simod-http:0.2.0
 ENV KUBERNETES_NAMESPACE=default
 
-CMD ["poetry", "run", "src/simod_queue_worker/main.py"]
+CMD ["poetry", "run", "python", "src/simod_queue_worker/main.py"]

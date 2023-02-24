@@ -1,0 +1,36 @@
+services:
+  worker:
+    image: nokal/simod-queue-worker:0.0.0
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - rabbitmq-service
+    restart: unless-stopped
+    environment:
+      BROKER_URL: amqp://guest:guest@rabbitmq-service:5672
+      SIMOD_REQUESTS_QUEUE_NAME: requests
+      SIMOD_RESULTS_QUEUE_NAME: results
+      SIMOD_DOCKER_IMAGE: nokal/simod:3.3.0
+      KUBERNETES_NAMESPACE: default
+
+  http:
+    image: nokal/simod-http:0.2.0
+    depends_on:
+      - rabbitmq-service
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq-service:5672
+      SIMOD_REQUESTS_QUEUE_NAME: requests
+      SIMOD_RESULTS_QUEUE_NAME: results
+      SIMOD_HTTP_PORT: 8000
+      SIMOD_HTTP_STORAGE_PATH: /data
+    ports:
+      - 8000:8000
+
+  rabbitmq-service:
+    image: rabbitmq:3.11-management-alpine
+    ports:
+      - 5672:5672
+      - 15672:15672
+    restart: unless-stopped

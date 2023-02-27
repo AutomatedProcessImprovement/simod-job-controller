@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "simod-queue-worker"
-version = "0.1.0"
-description = "Simod worker that handles job requests from the queue"
+name = "simod-job-controller"
+version = "0.2.0"
+description = "Worker that runs Simod jobs received from a broker"
 authors = ["Ihar Suvorau <ihar.suvorau@gmail.com>"]
 readme = "README.md"
 

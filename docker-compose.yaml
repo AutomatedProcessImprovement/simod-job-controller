@@ -1,6 +1,6 @@
 services:
   worker:
-    image: nokal/simod-queue-worker:0.0.0
+    image: nokal/simod-job-controller:0.2.0
     build:
       context: .
       dockerfile: Dockerfile
@@ -15,14 +15,14 @@ services:
       KUBERNETES_NAMESPACE: default
 
   http:
-    image: nokal/simod-http:0.2.0
+    image: nokal/simod-http:0.3.1
     depends_on:
       - rabbitmq-service
     restart: unless-stopped
     environment:
       RABBITMQ_URL: amqp://guest:guest@rabbitmq-service:5672
-      SIMOD_REQUESTS_QUEUE_NAME: requests
-      SIMOD_RESULTS_QUEUE_NAME: results
+      SIMOD_EXCHANGE_NAME: 'simod'
+      SIMOD_PENDING_ROUTING_KEY: 'requests.status.pending'
       SIMOD_HTTP_PORT: 8000
       SIMOD_HTTP_STORAGE_PATH: /data
     ports:

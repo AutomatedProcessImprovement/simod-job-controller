@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "simod-job-controller"
-version = "0.2.1"
+version = "0.2.2"
 description = "Worker that runs Simod jobs received from a broker"
 authors = ["Ihar Suvorau <ihar.suvorau@gmail.com>"]
 readme = "README.md"

@@ -152,6 +152,8 @@ class Worker:
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+
     settings = Settings()
     worker = Worker(settings)
     worker.run()

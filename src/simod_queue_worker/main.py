@@ -4,18 +4,19 @@ from pathlib import Path
 
 import pika
 from kubernetes import client, config
+from pika import spec
+from pika.adapters.blocking_connection import BlockingChannel
 
 
-class UserSettings:
+class Settings:
     broker_url: str
-    requests_queue: str
-    results_queue: str
+    binding_key: str
     simod_docker_image: str
 
     def __init__(self):
         self.broker_url = os.environ.get('BROKER_URL')
-        self.requests_queue = os.environ.get('SIMOD_REQUESTS_QUEUE_NAME')
-        self.results_queue = os.environ.get('SIMOD_RESULTS_QUEUE_NAME')
+        self.exchange_name = os.environ.get('SIMOD_EXCHANGE_NAME')
+        self.binding_key = os.environ.get('SIMOD_PENDING_ROUTING_KEY')
         self.simod_docker_image = os.environ.get('SIMOD_DOCKER_IMAGE')
         self.kubernetes_namespace = os.environ.get('KUBERNETES_NAMESPACE', 'default')
 
@@ -25,34 +26,70 @@ class UserSettings:
     def is_valid(self):
         return (
                 self.broker_url is not None
-                and self.requests_queue is not None
-                and self.results_queue is not None
+                and self.exchange_name is not None
+                and self.binding_key is not None
                 and self.simod_docker_image is not None
         )
 
 
 class Worker:
-    def __init__(self, settings: UserSettings):
+    def __init__(self, settings: Settings):
         self.settings = settings
 
         self._parameters = pika.URLParameters(self.settings.broker_url)
         self._connection = pika.BlockingConnection(self._parameters)
         self._channel = self._connection.channel()
 
-    def on_message(self, channel, method_frame, header_frame, body):
-        logging.info(
-            'Received message {} from {}: {}'.format(
-                method_frame.delivery_tag, header_frame.app_id, body
-            )
+        self._queue_name = None
+
+    def run(self):
+        self._channel.exchange_declare(
+            exchange=self.settings.exchange_name,
+            exchange_type='topic',
+            durable=True,
         )
 
-        channel.basic_ack(delivery_tag=method_frame.delivery_tag)
+        result = self._channel.queue_declare('', exclusive=True)
+        self._queue_name = result.method.queue
 
-        self.submit_job(body)
+        self._channel.queue_bind(
+            exchange=self.settings.exchange_name,
+            queue=self._queue_name,
+            routing_key=self.settings.binding_key,
+        )
 
-    def submit_job(self, job_request_id):
-        job_request_id = str(job_request_id, 'utf-8')
-        logging.info('Processing request: {}'.format(job_request_id))
+        self._channel.basic_consume(queue=self._queue_name, on_message_callback=self.on_message)
+
+        logging.info('Worker started')
+
+        try:
+            self._channel.start_consuming()
+        except Exception as e:
+            logging.error(e)
+            self._channel.stop_consuming()
+        self._connection.close()
+
+        logging.info('Worker stopped')
+
+    def on_message(
+            self,
+            channel: BlockingChannel,
+            method: spec.Basic.Deliver,
+            properties: spec.BasicProperties,
+            body: bytes,
+    ):
+        request_id = body.decode()
+        routing_key = method.routing_key
+        status = routing_key.split('.')[-1]
+
+        logging.info(f'Got message: {request_id} {status}')
+
+        self.submit_job(request_id)
+
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    def submit_job(self, job_request_id: str):
+        logging.info(f'Submitting a job for {job_request_id}')
 
         config.load_incluster_config()
 
@@ -113,24 +150,8 @@ class Worker:
         )
         return job
 
-    def run(self):
-        self._channel.queue_declare(queue=self.settings.requests_queue, durable=True)
-
-        self._channel.basic_consume(
-            queue=self.settings.requests_queue, on_message_callback=self.on_message
-        )
-
-        try:
-            self._channel.start_consuming()
-        except Exception as e:
-            logging.error(e)
-            self._channel.stop_consuming()
-        self._connection.close()
-
-        logging.info('Worker stopped')
-
 
 if __name__ == '__main__':
-    settings = UserSettings()
+    settings = Settings()
     worker = Worker(settings)
     worker.run()

@@ -9,6 +9,7 @@ RUN poetry install
 
 ENV PYTHONUNBUFFERED=1
 ENV BROKER_URL=amqp://guest:guest@rabbitmq-service:5672
+ENV SIMOD_EXCHANGE_NAME=simod
 ENV SIMOD_PENDING_ROUTING_KEY=requests.status.pending
 ENV SIMOD_DOCKER_IMAGE=nokal/simod:3.3.0
 ENV KUBERNETES_NAMESPACE=default

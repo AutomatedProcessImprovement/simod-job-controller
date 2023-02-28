@@ -1,11 +1,14 @@
+import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 import pika
 from kubernetes import client, config
 from pika import spec
 from pika.adapters.blocking_connection import BlockingChannel
+from pika.spec import PERSISTENT_DELIVERY_MODE
 
 
 class Settings:
@@ -41,8 +44,15 @@ class Worker:
         self._channel = self._connection.channel()
 
         self._queue_name = None
+        self._background_tasks = set()
 
-    def run(self):
+        self.init_cluster_config()
+
+    @staticmethod
+    def init_cluster_config():
+        config.load_incluster_config()
+
+    async def run(self):
         self._channel.exchange_declare(
             exchange=self.settings.exchange_name,
             exchange_type='topic',
@@ -91,28 +101,76 @@ class Worker:
     def submit_job(self, job_request_id: str):
         logging.info(f'Submitting a job for {job_request_id}')
 
-        config.load_incluster_config()
-
         with client.ApiClient() as api_client:
-            job = self.make_job(job_request_id)
+            api_response = self.try_job_with_client(job_request_id, api_client)
 
-            try:
+            if api_response is None:
+                logging.error(f'Failed to submit a job for {job_request_id}')
+                self.try_publish_job_status('failed', job_request_id)
+                return
+
+            job_name = api_response.metadata.name
+            self.add_job_watcher(job_name, job_request_id)
+
+    def try_job_with_client(self, job_request_id: str, api_client: client.ApiClient) -> Optional[client.V1Job]:
+        job = self.make_job(job_request_id)
+
+        try:
+            api_instance = client.BatchV1Api(api_client)
+            api_response = api_instance.create_namespaced_job(namespace=self.settings.kubernetes_namespace, body=job)
+            logging.info(api_response)
+            return api_response
+        except client.rest.ApiException as e:
+            logging.exception('Exception when calling BatchV1Api->create_namespaced_job: %s, %s'.format(e, e.body))
+
+        return None
+
+    def add_job_watcher(self, job_name: str, job_request_id: str):
+        task = asyncio.create_task(self.watch_task(job_name, job_request_id))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def watch_task(self, job_name: str, job_request_id: str, delay_seconds: int = 10):
+        logging.info(f'Watching job {job_name}')
+
+        previous_status = None
+
+        while True:
+            with client.ApiClient() as api_client:
                 api_instance = client.BatchV1Api(api_client)
-                api_instance.create_namespaced_job(namespace=self.settings.kubernetes_namespace, body=job)
-            except client.rest.ApiException as e:
-                logging.exception('Exception when calling BatchV1Api->create_namespaced_job: %s, %s'.format(e, e.body))
+                api_response = api_instance.read_namespaced_job(job_name, self.settings.kubernetes_namespace)
+
+                status = self.get_status_from_response(api_response)
+
+                if status is not None:
+                    logging.info(f'Job {job_name} status changed to {status}')
+
+                    if previous_status != status:
+                        self.try_publish_job_status(status, job_request_id)
+                        previous_status = status
+
+                    if status in ['succeeded', 'failed']:
+                        break
+
+            await asyncio.sleep(delay_seconds)
+
+        logging.info(f'Job {job_name} watcher stopped')
 
     def make_job(self, job_request_id) -> client.V1Job:
         request_output_dir = Path(f'/tmp/simod-volume/data/requests/{job_request_id}')
         config_path = request_output_dir / 'configuration.yaml'
+        job_name = self.job_name(job_request_id)
+
         job = client.V1Job(
             api_version='batch/v1',
             kind='Job',
-            metadata=client.V1ObjectMeta(name=f'simod-{job_request_id}'),
+            metadata=client.V1ObjectMeta(name=job_name),
             spec=client.V1JobSpec(
-                ttl_seconds_after_finished=5,
+                # ttl_seconds_after_finished=5,
+                backoff_limit=0,
                 template=client.V1PodTemplateSpec(
                     spec=client.V1PodSpec(
+                        restart_policy='OnFailure',
                         containers=[
                             client.V1Container(
                                 name='simod',
@@ -135,7 +193,6 @@ class Worker:
                                 ],
                             )
                         ],
-                        restart_policy='Never',
                         volumes=[
                             client.V1Volume(
                                 name='simod-data',
@@ -148,12 +205,47 @@ class Worker:
                 ),
             ),
         )
+
         return job
+
+    @staticmethod
+    def get_status_from_response(api_response: client.V1Job) -> Optional[str]:
+        status = api_response.status
+        if status.succeeded == 1:
+            return 'succeeded'
+        elif status.failed == 1:
+            return 'failed'
+        elif status.active == 1:
+            return 'running'
+        else:
+            return None
+
+    def try_publish_job_status(self, job_status: str, job_request_id: str):
+        routing_key = f'requests.status.{job_status}'
+
+        try:
+            self._channel.basic_publish(
+                exchange=self.settings.exchange_name,
+                routing_key=routing_key,
+                body=job_request_id.encode(),
+                properties=pika.BasicProperties(delivery_mode=PERSISTENT_DELIVERY_MODE),
+            )
+            logging.info(f'Published job status {job_status} for the request {job_request_id}')
+        except Exception as e:
+            logging.error(f'Failed to publish job status {job_status} for the request {job_request_id}: {e}')
+
+    @staticmethod
+    def job_name(job_request_id: str) -> str:
+        return f'simod-{job_request_id}'
+
+
+async def main():
+    settings = Settings()
+    worker = Worker(settings)
+    await worker.run()
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(level=logging.INFO)
 
-    settings = Settings()
-    worker = Worker(settings)
-    worker.run()
+    asyncio.run(main())

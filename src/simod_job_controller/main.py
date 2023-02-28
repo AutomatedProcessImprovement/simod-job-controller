@@ -8,7 +8,6 @@ import pika
 from kubernetes import client, config
 from pika import spec
 from pika.adapters.blocking_connection import BlockingChannel
-from pika.spec import PERSISTENT_DELIVERY_MODE
 
 
 class Settings:
@@ -118,7 +117,6 @@ class Worker:
         try:
             api_instance = client.BatchV1Api(api_client)
             api_response = api_instance.create_namespaced_job(namespace=self.settings.kubernetes_namespace, body=job)
-            logging.info(api_response)
             return api_response
         except client.rest.ApiException as e:
             logging.exception('Exception when calling BatchV1Api->create_namespaced_job: %s, %s'.format(e, e.body))
@@ -166,7 +164,7 @@ class Worker:
             kind='Job',
             metadata=client.V1ObjectMeta(name=job_name),
             spec=client.V1JobSpec(
-                # ttl_seconds_after_finished=5,
+                ttl_seconds_after_finished=180,
                 backoff_limit=0,
                 template=client.V1PodTemplateSpec(
                     spec=client.V1PodSpec(
@@ -228,7 +226,6 @@ class Worker:
                 exchange=self.settings.exchange_name,
                 routing_key=routing_key,
                 body=job_request_id.encode(),
-                properties=pika.BasicProperties(delivery_mode=PERSISTENT_DELIVERY_MODE),
             )
             logging.info(f'Published job status {job_status} for the request {job_request_id}')
         except Exception as e:

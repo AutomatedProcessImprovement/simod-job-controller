@@ -1,4 +1,4 @@
-# Simod Job Controller
+# simod-job-controller
 
 ![simod-job-controller](https://github.com/AutomatedProcessImprovement/simod-job-controller/actions/workflows/build.yaml/badge.svg)
 
